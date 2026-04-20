@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Humans vs Monsters: Rugby Edition</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <style>
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      overflow: hidden;
+      background: #142638;
+      font-family: Inter, ui-rounded, "Trebuchet MS", Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+<script>
+let playerImg;
+let playerImgReady = false;
+let playerImgFailed = false;
+let zombieImg;
+let zombieImgReady = false;
+let zombieImgFailed = false;
+
+const GAME = {
+  TITLE: "title",
+  PLAY: "play",
+  WIN: "win",
+  LOSE: "lose"
+};
+
+let state = GAME.TITLE;
+let player;
+let coins = [];
+let monsters = [];
+let receiptGhosts = [];
+let powerups = [];
+let particles = [];
+let campBits = [];
+let budget = 0;
+let goalBudget = 160;
+let houseProgress = 0;
+let combo = 0;
+let comboTimer = 0;
+let timeLeft = 75;
+let elapsed = 0;
+let difficulty = 1;
+let rugbyBall;
+let mascotSurprise = null;
+let shake = 0;
+
+function preload() {
+  playerImg = loadImage(
+    "assets/player.png?demo=2",
+    () => {
+      playerImgReady = true;
+    },
+    () => {
+      playerImgFailed = true;
+    }
+  );
+  zombieImg = loadImage(
+    "assets/zombie.png?demo=2",
+    () => {
+      zombieImgReady = true;
+    },
+    () => {
+      zombieImgFailed = true;
+    }
+  );
+}
+
+function imageLoaded(img, ready, failed) {
+  return !failed && img && (ready || img.width > 1);
+}
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  textFont("Trebuchet MS");
+  resetGame();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  buildCampBits();
+  resetPositionsSoft();
+}
+
+function resetGame() {
+  budget = 0;
+  houseProgress = 0;
+  combo = 0;
+  comboTimer = 0;
+  timeLeft = 75;
+  elapsed = 0;
+  difficulty = 1;
+  shake = 0;
+  mascotSurprise = null;
+  particles = [];
+  coins = [];
+  monsters = [];
+  receiptGhosts = [];
+  powerups = [];
+  buildCampBits();
+  player = {
+    x: width * 0.18,
+    y: height * 0.68,
+    r: 24,
+    vx: 0,
+    vy: 0,
+    speed: 4.15,
+    dash: 0,
+    dashCooldown: 0,
+    shield: 0,
+    invuln: 0,
+    tailWag: 0,
+    facing: 1
+  };
+  rugbyBall = {
+    x: width * 0.5,
+    y: height * 0.52,
+    vx: 2.2,
+    vy: -1.7,
+    r: 13
+  };
+
+  for (let i = 0; i < 18; i++) spawnCoin();
+  for (let i = 0; i < 5; i++) spawnMonster(i);
+  spawnReceiptGhost();
+  spawnPowerup();
+}
+
+function resetPositionsSoft() {
+  if (!player) return;
+  player.x = constrain(player.x, 50, width - 50);
+  player.y = constrain(player.y, 118, height - 64);
+  if (rugbyBall) {
+    rugbyBall.x = constrain(rugbyBall.x, 60, width - 60);
+    rugbyBall.y = constrain(rugbyBall.y, 130, height - 70);
+  }
+}
+
+function draw() {
+  drawWorld();
+  if (shake > 0) {
+    translate(random(-shake, shake), random(-shake, shake));
+    shake *= 0.82;
+    if (shake < 0.2) shake = 0;
+  }
+
+  if (state === GAME.TITLE) {
+    drawCampScene();
+    drawTitleScreen();
+    drawParticles();
+    return;
+  }
+
+  if (state === GAME.PLAY) {
+    updateGame();
+    drawCampScene();
+    drawGameplay();
+    drawHud();
+    drawParticles();
+    return;
+  }
+
+  drawCampScene();
+  drawGameplay();
+  drawHud();
+  drawParticles();
+  drawEndScreen(state === GAME.WIN);
+}
+
+function drawWorld() {
+  const top = color(85, 184, 208);
+  const mid = color(126, 208, 136);
+  const bottom = color(42, 132, 86);
+  for (let y = 0; y < height; y++) {
+    let c = y < height * 0.58
+      ? lerpColor(top, mid, y / (height * 0.58))
+      : lerpColor(mid, bottom, (y - height * 0.58) / (height * 0.42));
+    stroke(c);
+    line(0, y, width, y);
+  }
+
+  noStroke();
+  fill(255, 232, 139, 210);
+  circle(width * 0.84, height * 0.14, 82);
+  fill(255, 255, 225, 80);
+  circle(width * 0.84, height * 0.14, 122 + sin(frameCount * 0.02) * 8);
+
+  for (const bit of campBits) {
+    drawCampBit(bit);
+  }
+}
+
+function buildCampBits() {
+  campBits = [];
+  for (let i = 0; i < 15; i++) {
+    campBits.push({
+      type: "tree",
+      x: random(20, width - 20),
+      y: random(height * 0.18, height * 0.92),
+      s: random(0.7, 1.35),
+      sway: random(TWO_PI)
+    });
+  }
+  for (let i = 0; i < 8; i++) {
+    campBits.push({
+      type: "badge",
+      x: random(34, width - 34),
+      y: random(height * 0.58, height * 0.94),
+      s: random(0.75, 1.15),
+      sway: random(TWO_PI)
+    });
+  }
+}
+
+function drawCampBit(bit) {
+  push();
+  translate(bit.x, bit.y);
+  scale(bit.s);
+  if (bit.type === "tree") {
+    const sway = sin(frameCount * 0.018 + bit.sway) * 3;
+    fill(70, 70, 45, 70);
+    ellipse(3, 32, 46, 13);
+    fill(117, 82, 48);
+    rect(-5, -2, 10, 38, 5);
+    fill(35, 118, 76);
+    triangle(-28 + sway, 8, 0 + sway, -48, 28 + sway, 8);
+    fill(45, 147, 91);
+    triangle(-24 - sway, -8, 0 - sway, -58, 24 - sway, -8);
+    fill(73, 172, 102);
+    triangle(-20 + sway, -24, 0 + sway, -68, 20 + sway, -24);
+  } else {
+    fill(255, 239, 119, 120);
+    circle(0, 0, 20);
+    fill(255, 204, 74, 180);
+    beginShape();
+    for (let i = 0; i < 10; i++) {
+      const a = -HALF_PI + i * TWO_PI / 10;
+      const rr = i % 2 === 0 ? 12 : 6;
+      vertex(cos(a) * rr, sin(a) * rr);
+    }
+    endShape(CLOSE);
+  }
+  pop();
+}
+
+function drawCampScene() {
+  drawRugbyField();
+  drawCabin();
+  drawBudgetBooth();
+}
+
+function drawRugbyField() {
+  push();
+  noStroke();
+  fill(37, 143, 78, 150);
+  rect(24, height * 0.39, width - 48, height * 0.54, 24);
+  stroke(255, 255, 255, 72);
+  strokeWeight(3);
+  line(width * 0.5, height * 0.42, width * 0.5, height * 0.9);
+  for (let x = 0.22; x < 0.9; x += 0.14) {
+    line(width * x, height * 0.47, width * x, height * 0.86);
+  }
+  noFill();
+  ellipse(width * 0.5, height * 0.66, 150, 96);
+  pop();
+}
+
+function drawCabin() {
+  const x = width - 220;
+  const y = 104;
+  const p = houseProgress;
+  push();
+  translate(x, y);
+  drawingContext.shadowBlur = 18;
+  drawingContext.shadowColor = "rgba(55, 44, 29, 0.28)";
+  fill(110, 76, 48);
+  rect(16, 76, 150, 78, 9);
+  fill(159, 96, 54);
+  rect(27, 87, 128, 56, 5);
+  fill(70, 45, 38);
+  triangle(4, 82, 91, 18, 178, 82);
+  fill(196, 54, 54);
+  triangle(16, 76, 91, 28, 166, 76);
+  fill(255, 218, 102);
+  rect(69, 103, 34, 50, 6);
+  fill(107, 179, 216);
+  rect(118, 95, 28, 28, 4);
+  drawingContext.shadowBlur = 0;
+  fill(255, 255, 255, 215);
+  rect(11, 166, 160, 14, 8);
+  fill(255, 196, 64);
+  rect(11, 166, 160 * p, 14, 8);
+  fill(26, 60, 49);
+  textAlign(CENTER, CENTER);
+  textSize(13);
+  text("Dream Cabin Fund", 91, 194);
+  pop();
+}
+
+function drawBudgetBooth() {
+  push();
+  translate(98, 105);
+  drawingContext.shadowBlur = 12;
+  drawingContext.shadowColor = "rgba(0,0,0,0.18)";
+  fill(255, 244, 184);
+  rect(-48, 18, 118, 76, 8);
+  fill(42, 126, 172);
+  rect(-60, 4, 142, 22, 6);
+  fill(244, 89, 84);
+  textAlign(CENTER, CENTER);
+  textSize(15);
+  text("BUDGET HQ", 11, 15);
+  drawingContext.shadowBlur = 0;
+  fill(86, 65, 45);
+  textSize(13);
+  text("No snack math panic!", 11, 56);
+  pop();
+}
+
+function updateGame() {
+  elapsed += deltaTime / 1000;
+  timeLeft -= deltaTime / 1000;
+  difficulty = 1 + elapsed / 35;
+  if (timeLeft <= 0) {
+    state = GAME.LOSE;
+    burst(player.x, player.y, color(95, 140, 180), 34);
+  }
+
+  updatePlayer();
+  updateRugbyBall();
+  updateCoins();
+  updateMonsters();
+  updateReceiptGhosts();
+  updatePowerups();
+  updateParticles();
+
+  houseProgress = constrain(budget / goalBudget, 0, 1);
+  if (budget >= goalBudget) {
+    state = GAME.WIN;
+    burst(width - 130, 210, color(255, 218, 88), 90);
+  }
+
+  if (comboTimer > 0) comboTimer -= deltaTime / 1000;
+  else combo = 0;
+}
+
+function updatePlayer() {
+  let ax = 0;
+  let ay = 0;
+  if (keyIsDown(LEFT_ARROW)) ax -= 1;
+  if (keyIsDown(RIGHT_ARROW)) ax += 1;
+  if (keyIsDown(UP_ARROW)) ay -= 1;
+  if (keyIsDown(DOWN_ARROW)) ay += 1;
+  const mag = sqrt(ax * ax + ay * ay) || 1;
+  ax /= mag;
+  ay /= mag;
+
+  const boost = player.dash > 0 ? 2.25 : 1;
+  const shieldBoost = player.shield > 0 ? 1.08 : 1;
+  player.vx = lerp(player.vx, ax * player.speed * boost * shieldBoost, 0.35);
+  player.vy = lerp(player.vy, ay * player.speed * boost * shieldBoost, 0.35);
+  if (abs(player.vx) > 0.25) player.facing = player.vx < 0 ? -1 : 1;
+  player.x += player.vx;
+  player.y += player.vy;
+  player.x = constrain(player.x, 36, width - 36);
+  player.y = constrain(player.y, 120, height - 42);
+  player.tailWag += abs(player.vx) + abs(player.vy) + 0.1;
+
+  if (player.dash > 0) {
+    player.dash -= deltaTime / 1000;
+    if (frameCount % 2 === 0) sparkle(player.x - player.vx * 2, player.y - player.vy * 2, color(255, 229, 95));
+  }
+  if (player.dashCooldown > 0) player.dashCooldown -= deltaTime / 1000;
+  if (player.shield > 0) player.shield -= deltaTime / 1000;
+  if (player.invuln > 0) player.invuln -= deltaTime / 1000;
+}
+
+function updateRugbyBall() {
+  rugbyBall.x += rugbyBall.vx * difficulty;
+  rugbyBall.y += rugbyBall.vy * difficulty;
+  if (rugbyBall.x < 45 || rugbyBall.x > width - 45) rugbyBall.vx *= -1;
+  if (rugbyBall.y < 135 || rugbyBall.y > height - 48) rugbyBall.vy *= -1;
+  rugbyBall.vx += random(-0.035, 0.035);
+  rugbyBall.vy += random(-0.035, 0.035);
+
+  if (dist(player.x, player.y, rugbyBall.x, rugbyBall.y) < player.r + rugbyBall.r) {
+    addBudget(8, rugbyBall.x, rugbyBall.y, "TRY BONUS!");
+    rugbyBall.vx = random([-1, 1]) * random(2.3, 3.7);
+    rugbyBall.vy = random([-1, 1]) * random(1.8, 3.2);
+    burst(rugbyBall.x, rugbyBall.y, color(255, 245, 160), 16);
+  }
+}
+
+function updateCoins() {
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    c.t += 0.08;
+    c.y += sin(c.t) * 0.1;
+    if (dist(player.x, player.y, c.x, c.y) < player.r + c.r) {
+      coins.splice(i, 1);
+      addBudget(c.value, c.x, c.y, c.rare ? "COOKIE JACKPOT!" : "BUDGET!");
+      burst(c.x, c.y, c.rare ? color(255, 109, 155) : color(255, 219, 76), c.rare ? 34 : 14);
+      spawnCoin();
+      if (random() < 0.08 && !mascotSurprise) {
+        mascotSurprise = { x: c.x, y: c.y, t: 2.4, label: "A budget badge did jazz hands!" };
+      }
+    }
+  }
+}
+
+function updateMonsters() {
+  for (const m of monsters) {
+    m.t += deltaTime / 1000;
+    const prevX = m.x;
+    if (m.kind === "patrol") {
+      m.x = m.cx + cos(m.t * m.speed) * m.range;
+      m.y = m.cy + sin(m.t * m.speed * 0.72) * m.range * 0.35;
+    } else {
+      const angle = atan2(player.y - m.y, player.x - m.x);
+      m.x += cos(angle) * m.speed * difficulty * 0.54;
+      m.y += sin(angle) * m.speed * difficulty * 0.54;
+      if (random() < 0.015) m.speed = random(1.2, 2.1);
+    }
+
+    m.x = constrain(m.x, 32, width - 32);
+    m.y = constrain(m.y, 124, height - 42);
+    if (abs(m.x - prevX) > 0.08) m.facing = m.x < prevX ? -1 : 1;
+
+    if (dist(player.x, player.y, m.x, m.y) < player.r + m.r) {
+      if (player.shield > 0 || player.invuln > 0) {
+        m.x = random(width * 0.35, width * 0.86);
+        m.y = random(height * 0.36, height * 0.86);
+        addBudget(5, player.x, player.y, "DEFLECTED!");
+        burst(player.x, player.y, color(105, 220, 255), 26);
+      } else {
+        budget = max(0, budget - 28);
+        combo = 0;
+        player.invuln = 1.35;
+        shake = 6;
+        burst(player.x, player.y, color(102, 64, 145), 24);
+        if (budget <= 0 && elapsed > 7) {
+          state = GAME.LOSE;
+        }
+      }
+    }
+  }
+
+  if (elapsed > 24 && monsters.length < 7 && frameCount % 360 === 0) {
+    spawnMonster(monsters.length);
+  }
+}
+
+function updateReceiptGhosts() {
+  for (const g of receiptGhosts) {
+    g.t += deltaTime / 1000;
+    const prevX = g.x;
+    g.x = g.cx + sin(g.t * g.speed) * g.range;
+    g.y += sin(g.t * 2.1) * 0.42 + cos(g.t * 0.7) * 0.25;
+    g.y = constrain(g.y, 140, height - 60);
+    if (abs(g.x - prevX) > 0.08) g.facing = g.x < prevX ? -1 : 1;
+
+    if (dist(player.x, player.y, g.x, g.y) < player.r + g.r) {
+      if (player.shield > 0 || player.invuln > 0) {
+        addBudget(7, player.x, player.y, "AUDIT BLOCKED!");
+        g.cx = random(width * 0.28, width * 0.76);
+        g.y = random(height * 0.28, height * 0.82);
+        burst(g.x, g.y, color(230, 245, 255), 24);
+      } else {
+        budget = max(0, budget - 18);
+        combo = 0;
+        player.invuln = 1.1;
+        shake = 4;
+        g.cx = random(width * 0.28, width * 0.76);
+        g.x = g.cx;
+        g.y = random(height * 0.28, height * 0.82);
+        floatText("-$18 spooky receipt!", player.x, player.y - 26, color(255, 210, 230));
+        burst(player.x, player.y, color(240, 240, 255), 20);
+      }
+    }
+  }
+
+  if (elapsed > 36 && receiptGhosts.length < 2 && frameCount % 620 === 0) {
+    spawnReceiptGhost();
+  }
+}
+
+function updatePowerups() {
+  for (let i = powerups.length - 1; i >= 0; i--) {
+    const p = powerups[i];
+    p.t += 0.06;
+    if (dist(player.x, player.y, p.x, p.y) < player.r + p.r) {
+      player.shield = 8;
+      powerups.splice(i, 1);
+      burst(p.x, p.y, color(107, 224, 255), 42);
+      floatText("MALLOW SHIELD!", p.x, p.y - 20, color(235, 255, 255));
+    }
+  }
+  if (powerups.length === 0 && frameCount % 540 === 0) spawnPowerup();
+}
+
+function addBudget(amount, x, y, label) {
+  combo += 1;
+  comboTimer = 2.4;
+  const bonus = combo >= 3 ? min(15, combo * 2) : 0;
+  const total = amount + bonus;
+  budget += total;
+  floatText(`+$${total} ${label}`, x, y - 12, color(255, 250, 185));
+  if (bonus > 0) floatText(`${combo}x tidy budget combo`, x, y - 34, color(149, 255, 177));
+}
+
+function drawGameplay() {
+  for (const c of coins) drawCoin(c);
+  for (const p of powerups) drawPowerup(p);
+  drawRugbyBall();
+  for (const m of monsters) drawMonster(m);
+  for (const g of receiptGhosts) drawReceiptGhost(g);
+  drawPlayer();
+  if (mascotSurprise) drawMascotSurprise();
+}
+
+function drawCoin(c) {
+  push();
+  translate(c.x, c.y);
+  const bob = sin(c.t) * 4;
+  drawingContext.shadowBlur = 13;
+  drawingContext.shadowColor = c.rare ? "rgba(255,78,142,0.6)" : "rgba(255,218,69,0.55)";
+  fill(c.rare ? color(255, 102, 164) : color(255, 211, 62));
+  ellipse(0, bob, c.r * 2.1, c.r * 1.65);
+  fill(255, 248, 183, 210);
+  textAlign(CENTER, CENTER);
+  textSize(c.rare ? 17 : 14);
+  text(c.rare ? "★" : "$", 0, bob + 1);
+  drawingContext.shadowBlur = 0;
+  pop();
+}
+
+function drawPowerup(p) {
+  push();
+  translate(p.x, p.y + sin(p.t) * 5);
+  rotate(sin(p.t * 0.7) * 0.12);
+  drawingContext.shadowBlur = 18;
+  drawingContext.shadowColor = "rgba(111,225,255,0.7)";
+  fill(236, 255, 255);
+  rect(-16, -13, 32, 26, 8);
+  fill(113, 220, 255);
+  circle(-8, -4, 7);
+  circle(8, -4, 7);
+  fill(72, 94, 120);
+  arc(0, 3, 14, 9, 0, PI);
+  drawingContext.shadowBlur = 0;
+  pop();
+}
+
+function drawRugbyBall() {
+  push();
+  translate(rugbyBall.x, rugbyBall.y);
+  rotate(frameCount * 0.08);
+  drawingContext.shadowBlur = 10;
+  drawingContext.shadowColor = "rgba(74,43,22,0.42)";
+  fill(131, 75, 37);
+  ellipse(0, 0, 34, 22);
+  stroke(255, 245, 213);
+  strokeWeight(2);
+  line(-8, 0, 8, 0);
+  for (let x = -5; x <= 5; x += 5) line(x, -4, x, 4);
+  noStroke();
+  drawingContext.shadowBlur = 0;
+  pop();
+}
+
+function drawMonster(m) {
+  push();
+  translate(m.x, m.y);
+  const bounce = sin(frameCount * 0.12 + m.t) * 3;
+  translate(0, bounce);
+  drawingContext.shadowBlur = 15;
+  drawingContext.shadowColor = "rgba(45,20,72,0.38)";
+  scale(m.facing, 1);
+  if (imageLoaded(zombieImg, zombieImgReady, zombieImgFailed)) {
+    imageMode(CENTER);
+    const s = m.r * 4.35 + sin(frameCount * 0.1 + m.t) * 3;
+    const wobble = sin(frameCount * 0.08 + m.t) * 0.08;
+    rotate(wobble);
+    image(zombieImg, 0, 0, s, s);
+    drawingContext.shadowBlur = 0;
+    pop();
+    return;
+  }
+  drawFallbackMonster(m);
+  drawingContext.shadowBlur = 0;
+  pop();
+}
+
+function drawReceiptGhost(g) {
+  push();
+  translate(g.x, g.y + sin(g.t * 3) * 6);
+  scale(g.facing, 1);
+  drawingContext.shadowBlur = 18;
+  drawingContext.shadowColor = "rgba(245,245,255,0.8)";
+  textAlign(CENTER, CENTER);
+  textSize(g.r * 2.2);
+  text("👻", 0, 0);
+  drawingContext.shadowBlur = 0;
+
+  fill(255, 255, 255, 225);
+  rect(-24, 18, 48, 31, 7);
+  fill(65, 72, 90);
+  textSize(10);
+  text("$?$", 0, 30);
+  fill(151, 78, 141);
+  textSize(9);
+  text("AUDIT", 0, 41);
+  pop();
+}
+
+function drawFallbackMonster(m) {
+  fill(m.kind === "patrol" ? color(111, 71, 173) : color(80, 55, 139));
+  circle(0, 0, m.r * 2);
+  fill(70, 221, 150);
+  triangle(-m.r * 0.7, -m.r * 0.65, -m.r * 0.3, -m.r * 1.55, 1, -m.r * 0.62);
+  triangle(m.r * 0.7, -m.r * 0.65, m.r * 0.3, -m.r * 1.55, -1, -m.r * 0.62);
+  fill(255);
+  circle(-7, -4, 9);
+  circle(8, -4, 9);
+  fill(28);
+  circle(-6, -3, 3);
+  circle(9, -3, 3);
+  fill(255, 120, 120);
+  arc(1, 8, 18, 12, 0, PI);
+  fill(255, 255, 255);
+  triangle(-3, 8, 0, 14, 4, 8);
+}
+
+function drawPlayer() {
+  push();
+  translate(player.x, player.y);
+  const flicker = player.invuln > 0 && frameCount % 8 < 4;
+  if (flicker) tint(255, 130);
+
+  if (player.shield > 0) {
+    noFill();
+    stroke(180, 244, 255, 190 + sin(frameCount * 0.2) * 40);
+    strokeWeight(4);
+    circle(0, 0, player.r * 2.85);
+    noStroke();
+  }
+
+  drawingContext.shadowBlur = 16;
+  drawingContext.shadowColor = "rgba(57,42,24,0.32)";
+  scale(player.facing, 1);
+  if (imageLoaded(playerImg, playerImgReady, playerImgFailed)) {
+    imageMode(CENTER);
+    const s = player.r * 3.35 + sin(frameCount * 0.12) * 2;
+    image(playerImg, 0, 0, s, s);
+  } else {
+    drawFallbackRetriever();
+  }
+  drawingContext.shadowBlur = 0;
+  noTint();
+  pop();
+}
+
+function drawFallbackRetriever() {
+  const wag = sin(player.tailWag * 0.22) * 0.5;
+  push();
+  rotate(wag * 0.05);
+  fill(226, 169, 74);
+  ellipse(0, 3, 46, 36);
+  fill(210, 143, 57);
+  ellipse(-21, 5, 14, 27);
+  ellipse(21, 5, 14, 27);
+  fill(241, 194, 102);
+  circle(0, -5, 39);
+  fill(55, 38, 30);
+  circle(-8, -10, 4);
+  circle(8, -10, 4);
+  fill(73, 43, 32);
+  ellipse(0, 0, 9, 7);
+  fill(255, 120, 128);
+  arc(0, 8, 13, 11, 0, PI);
+  fill(255, 232, 138);
+  rect(-10, 15, 20, 10, 5);
+  fill(31, 111, 161);
+  textAlign(CENTER, CENTER);
+  textSize(10);
+  text("GS", 0, 20);
+  pop();
+}
+
+function drawMascotSurprise() {
+  mascotSurprise.t -= deltaTime / 1000;
+  const a = constrain(mascotSurprise.t / 2.4, 0, 1);
+  push();
+  translate(mascotSurprise.x, mascotSurprise.y - (1 - a) * 42);
+  fill(255, 255, 255, 220 * a);
+  rect(-102, -56, 204, 36, 12);
+  fill(50, 64, 74, 245 * a);
+  textAlign(CENTER, CENTER);
+  textSize(13);
+  text(mascotSurprise.label, 0, -38);
+  fill(255, 210, 83, 220 * a);
+  textSize(28);
+  text("★", 0, -4);
+  pop();
+  if (mascotSurprise.t <= 0) mascotSurprise = null;
+}
+
+function drawHud() {
+  push();
+  noStroke();
+  drawingContext.shadowBlur = 18;
+  drawingContext.shadowColor = "rgba(0,0,0,0.22)";
+  fill(255, 255, 255, 232);
+  rect(20, 18, min(470, width - 40), 78, 12);
+  drawingContext.shadowBlur = 0;
+  fill(32, 61, 55);
+  textAlign(LEFT, CENTER);
+  textSize(20);
+  text(`Budget: $${budget} / $${goalBudget}`, 38, 43);
+  textSize(14);
+  text(`Time: ${ceil(max(0, timeLeft))}s`, 38, 73);
+
+  const barW = min(230, width - 255);
+  fill(222, 231, 224);
+  rect(215, 37, barW, 16, 8);
+  fill(48, 190, 113);
+  rect(215, 37, barW * houseProgress, 16, 8);
+  fill(37, 65, 61);
+  textAlign(CENTER, CENTER);
+  textSize(12);
+  text("Best House Fund", 215 + barW / 2, 71);
+
+  if (combo > 1 && comboTimer > 0) {
+    fill(255, 241, 162);
+    rect(width - 195, 22, 170, 48, 12);
+    fill(80, 62, 30);
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    text(`${combo}x COMBO`, width - 110, 46);
+  }
+
+  if (player.shield > 0) {
+    fill(211, 251, 255);
+    rect(width - 198, 78, 173, 32, 10);
+    fill(39, 88, 111);
+    textSize(14);
+    textAlign(CENTER, CENTER);
+    text(`Shield ${player.shield.toFixed(1)}s`, width - 111, 94);
+  }
+
+  fill(255, 255, 255, 215);
+  rect(24, height - 48, 300, 30, 10);
+  fill(39, 68, 64);
+  textAlign(LEFT, CENTER);
+  textSize(13);
+  text("Arrows move • Space dashes • R restarts", 39, height - 33);
+  pop();
+}
+
+function drawTitleScreen() {
+  push();
+  fill(13, 30, 40, 112);
+  rect(0, 0, width, height);
+  const boxW = min(780, width - 38);
+  const boxH = min(470, height - 60);
+  const x = width / 2 - boxW / 2;
+  const y = height / 2 - boxH / 2;
+  drawingContext.shadowBlur = 30;
+  drawingContext.shadowColor = "rgba(0,0,0,0.35)";
+  fill(255, 255, 246, 242);
+  rect(x, y, boxW, boxH, 18);
+  drawingContext.shadowBlur = 0;
+
+  fill(44, 57, 68);
+  textAlign(CENTER, CENTER);
+  textSize(clampText(44, boxW, 16));
+  text("Humans vs Monsters: Rugby Edition", width / 2, y + 72);
+  fill(67, 117, 89);
+  textSize(20);
+  text("A Golden Retriever budget dash at Girl Scout Camp", width / 2, y + 116);
+
+  textAlign(LEFT, TOP);
+  fill(48, 63, 70);
+  textSize(18);
+  const copyX = x + 54;
+  let lineY = y + 165;
+  text("Collect cookie-money and rugby bonuses to fund the best cabin.", copyX, lineY);
+  lineY += 36;
+  text("Avoid zombies and the haunted receipt ghost. They have terrible snack math.", copyX, lineY);
+  lineY += 36;
+  text("Grab marshmallow shields and chain pickups for combo bonuses.", copyX, lineY);
+  lineY += 36;
+  text("Reach $160 before time runs out to win the dream house!", copyX, lineY);
+
+  fill(243, 97, 83);
+  rect(width / 2 - 132, y + boxH - 88, 264, 50, 12);
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(20);
+  text("Press ENTER to Start", width / 2, y + boxH - 63);
+  pop();
+}
+
+function drawEndScreen(won) {
+  push();
+  fill(12, 25, 32, 135);
+  rect(0, 0, width, height);
+  const boxW = min(650, width - 36);
+  const boxH = 310;
+  const x = width / 2 - boxW / 2;
+  const y = height / 2 - boxH / 2;
+  drawingContext.shadowBlur = 25;
+  drawingContext.shadowColor = "rgba(0,0,0,0.32)";
+  fill(won ? color(255, 253, 231, 246) : color(246, 248, 255, 246));
+  rect(x, y, boxW, boxH, 18);
+  drawingContext.shadowBlur = 0;
+
+  textAlign(CENTER, CENTER);
+  fill(won ? color(31, 112, 79) : color(115, 62, 118));
+  textSize(42);
+  text(won ? "Dream Cabin Funded!" : "Budget Bamboozled!", width / 2, y + 72);
+  fill(44, 57, 67);
+  textSize(18);
+  const msg = won
+    ? "The Golden Retriever scored the winning try and bought a spectacular camp house."
+    : "The monsters ate the spreadsheet. Deeply rude, but highly restartable.";
+  text(msg, width / 2, y + 132);
+  textSize(16);
+  text(`Final Budget: $${budget} • Combo Best-ish: ${max(combo, 1)}x`, width / 2, y + 177);
+  fill(245, 99, 83);
+  rect(width / 2 - 96, y + 220, 192, 46, 12);
+  fill(255);
+  textSize(20);
+  text("Press R", width / 2, y + 243);
+  pop();
+}
+
+function spawnCoin() {
+  const rare = random() < 0.09;
+  coins.push({
+    x: random(58, width - 58),
+    y: random(145, height - 58),
+    r: rare ? 17 : 13,
+    value: rare ? 26 : 9,
+    rare,
+    t: random(TWO_PI)
+  });
+}
+
+function spawnMonster(i) {
+  const patrol = i % 2 === 0;
+  const cx = random(width * 0.36, width * 0.83);
+  const cy = random(height * 0.34, height * 0.83);
+  monsters.push({
+    kind: patrol ? "patrol" : "chase",
+    x: cx,
+    y: cy,
+    cx,
+    cy,
+    r: random(19, 25),
+    range: random(54, 116),
+    speed: random(1.1, 2.0),
+    t: random(TWO_PI),
+    facing: random() < 0.5 ? -1 : 1
+  });
+}
+
+function spawnReceiptGhost() {
+  receiptGhosts.push({
+    x: random(width * 0.25, width * 0.78),
+    y: random(height * 0.28, height * 0.78),
+    cx: random(width * 0.25, width * 0.78),
+    r: 26,
+    range: random(85, 145),
+    speed: random(0.65, 1.0),
+    t: random(TWO_PI),
+    facing: random() < 0.5 ? -1 : 1
+  });
+}
+
+function spawnPowerup() {
+  powerups.push({
+    x: random(66, width - 66),
+    y: random(150, height - 68),
+    r: 20,
+    t: random(TWO_PI)
+  });
+}
+
+function sparkle(x, y, c) {
+  particles.push({
+    x,
+    y,
+    vx: random(-1.2, 1.2),
+    vy: random(-1.8, 0.6),
+    life: random(0.35, 0.7),
+    maxLife: 0.7,
+    size: random(4, 8),
+    c,
+    label: null
+  });
+}
+
+function burst(x, y, c, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x,
+      y,
+      vx: random(-4.5, 4.5),
+      vy: random(-4.5, 4.5),
+      life: random(0.45, 1.1),
+      maxLife: 1.1,
+      size: random(3, 10),
+      c,
+      label: null
+    });
+  }
+}
+
+function floatText(label, x, y, c) {
+  particles.push({
+    x,
+    y,
+    vx: 0,
+    vy: -1.1,
+    life: 1.2,
+    maxLife: 1.2,
+    size: 16,
+    c,
+    label
+  });
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.label ? 0 : 0.04;
+    p.life -= deltaTime / 1000;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  push();
+  noStroke();
+  for (const p of particles) {
+    const a = constrain(p.life / p.maxLife, 0, 1);
+    if (p.label) {
+      fill(red(p.c), green(p.c), blue(p.c), 255 * a);
+      textAlign(CENTER, CENTER);
+      textSize(p.size);
+      text(p.label, p.x, p.y);
+    } else {
+      fill(red(p.c), green(p.c), blue(p.c), 210 * a);
+      circle(p.x, p.y, p.size * a);
+    }
+  }
+  pop();
+}
+
+function keyPressed() {
+  if (state === GAME.TITLE && keyCode === ENTER) {
+    resetGame();
+    state = GAME.PLAY;
+  }
+  if ((state === GAME.WIN || state === GAME.LOSE) && (key === "r" || key === "R")) {
+    resetGame();
+    state = GAME.TITLE;
+  } else if (state === GAME.PLAY && (key === "r" || key === "R")) {
+    resetGame();
+    state = GAME.TITLE;
+  }
+  if (state === GAME.PLAY && key === " " && player.dashCooldown <= 0) {
+    player.dash = 0.22;
+    player.dashCooldown = 1.2;
+    burst(player.x, player.y, color(255, 239, 118), 8);
+  }
+}
+
+function clampText(target, boxW, pad) {
+  return min(target, max(25, (boxW - pad * 2) / 17));
+}
+</script>
+</body>
+</html>
